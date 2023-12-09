@@ -1,0 +1,166 @@
+---
+title: "R Group Project Daniel"
+output: pdf_document
+date: "2023-12-08"
+---
+
+```{r}
+require(tidyverse)
+require(lme4)
+```
+
+# Raw Data
+```{r}
+Raw_data <- read.csv2("dataset_Rubalcaba_Polo.csv")
+```
+
+# Data Structure
+```{r}
+str(Raw_data) #The structure of the data
+colnames(Raw_data) #It's column names
+```
+
+# Organizing Data
+```{r}
+columns_used_data <- Raw_data %>% 
+select(Eggs, Hatchlings, Fledglings, Males, Females, Year) # Columns we will use
+```
+
+```{r}
+data_with_added_columns <- columns_used_data %>%
+  mutate(
+    deaths = Eggs - Fledglings,
+    survival_rate = Fledglings/Eggs,
+    percent_female = Females/(Males + Females)
+  ) #Adding all the columns we will use for analysis
+```
+
+# Data Explaination
+```{r}
+str(data_with_added_columns)
+```
+Egg: The amount of starling eggs in each observation
+Hatchlings: The amount of hatchlings in each observation
+Fledglings: The amount of fledglings in each observation
+Males: Amount of males per observation
+Females: Amount of females per observation
+Year: The year the observation takes place
+deaths: Taken as Eggs - Fledglings, is the amount of eggs that didn't survive to fledglings
+survival rate: Taken as Fledgling/Egg, the percentage that survived
+percent_females: Taken as Females/(Females + Males), the percentage of offsping that is female
+
+# Quick Analysis
+
+## Female Percentage on Survival Rates and Deaths
+
+```{r}
+#Using density plot to visually check for normality
+ggplot(data_with_added_columns, aes(x = survival_rate)) + 
+  geom_density()
+
+ggplot(data_with_added_columns, aes(x = deaths)) + 
+  geom_density()
+```
+
+Distribution seems non normal from this density plot.
+
+```{r}
+data_with_added_columns %>% 
+  ggplot(aes(x = percent_female, y = survival_rate)) +
+  geom_point() +
+  stat_smooth(method = "lm", se = F, colour = "gray")
+
+#Visually check for linearity
+```
+
+Points are scattered far from best fit, so it doesn't seem linear.
+
+```{r}
+data_with_added_columns %>% 
+  ggplot(aes(x = percent_female, y = mean(survival_rate))) +
+  geom_point() +
+  stat_smooth(method = "lm", se = F, colour = "gray")
+#Visually check for linearity using the mean
+```
+
+A very flat line, doesn't seem linear.
+
+```{r}
+data_with_female_percentage_group <- data_with_added_columns %>% 
+ mutate(Female_percentage_group = cut(percent_female,
+                                       breaks = seq(0, 1, by = 0.25),  # Bins at 0%, 25%, 50%, 75%, 100%
+                                       include.lowest = TRUE,
+                                       labels = c("0-25%", "26-50%", "51-75%", "76-100%"))) #Grouping into brackets to see the trend, as to make sure some mean values aren't from one observation
+
+data_with_mean_survival_female_percentage <- data_with_female_percentage_group %>% 
+  group_by(Female_percentage_group) %>%
+  summarize(Mean_survival_rate = mean(survival_rate, na.rm = TRUE))
+
+survival_rate_plot <- data_with_mean_survival_female_percentage %>% 
+  ggplot(aes(x = Female_percentage_group, y = Mean_survival_rate)) +
+  geom_point() +
+  labs(x = "Female Percentage Group", y = "Mean Survial Rate", title = "Female Percentage by Mean Survial Rate")
+#Plot of the trends, using female percentage groups
+
+ggsave("Female Plot.png", plot = survival_rate_plot, width = 10, height = 8, dpi = 300)
+
+survival_rate_plot
+```
+
+Seems to be a trend of positive slope till around 75%, then negative.
+
+```{r}
+data_with_mean_death <- data_with_female_percentage_group %>% 
+  group_by(Female_percentage_group) %>%
+  summarize(Mean_deaths = mean(deaths, na.rm = TRUE))
+
+data_with_mean_death %>% 
+  ggplot(aes(x = Female_percentage_group, y = Mean_deaths)) +
+  geom_point() +
+  labs(x = "Female Percentage Group", y = "Mean Deaths", title = "Female Percentage by Mean Deaths")
+#Same thing, but with deaths instead
+```
+
+It seems that female percentage stops having a positive effect after the 51-75% group on survival rate and death.
+
+# Model of #Female to #Fledgling
+
+Since the data doesn't seem to be normal, or linear, GLM will be used instead.
+
+```{r}
+model_poisson <- glm(Fledglings ~ Females, family = poisson, data = data_with_added_columns) #The linear Poisson model
+
+summary(model_poisson)
+```
+
+```{r}
+model_poisson_quadratic <- glm(Fledglings ~ Females + I(Females^2), family = poisson, data = data_with_added_columns) #The quadratic Poisson model
+
+summary(model_poisson_quadratic)
+```
+
+The AIC score differs by <2, so the models are indistinguishable in this regard.
+
+From the linear model, it seems there is a significance of Amount of Females in a nest and the amount of eggs that survive into Fledglings, with a p value of 9.91e-06.
+
+## Graphing the model
+```{r}
+Range_of_Females <- seq(from = min(data_with_added_columns$Females), to = 10, by = 1) #Upping the range to 10 to see how the model continues
+
+Prediction <- data.frame(Females = Range_of_Females) #Making it into a data frame
+
+Prediction$Fledglings_Linear <- predict(model_poisson, newdata = Prediction, type = "response")
+Prediction$Fledglings_Quadratic <- predict(model_poisson_quadratic, newdata = Prediction, type = "response")
+```
+
+```{r}
+Model_comparison_plot <- ggplot(data_with_added_columns, aes(x = Females, y = Fledglings)) +
+  geom_point(colour = "grey") +
+  geom_line(data = Prediction, aes(x = Females, y = Fledglings_Linear), colour = "blue") +
+  geom_line(data = Prediction, aes(x= Females, y = Fledglings_Quadratic), colour = "red") +
+  labs(title = "Model Comparison: Linear vs Quadratic") #Making the Graph
+
+ggsave("compasison plot.png", plot = Model_comparison_plot, width = 10, height = 8, dpi = 300) #Saving as a png
+
+Model_comparison_plot
+```
